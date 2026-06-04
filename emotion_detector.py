@@ -131,32 +131,42 @@ async def _async_analyze(frame_b64: str) -> Optional[str]:
 
         # ----------------------------------------------------------------
         # FIX 1: websockets >= 10 renamed extra_headers → additional_headers.
-        # We try the new name first, then fall back gracefully.
+        # Try the new name first, fall back to the old name.
         # ----------------------------------------------------------------
+        headers = {"X-Hume-Api-Key": HUME_API_KEY}
         ws_connect = None
         for header_kwarg in ("additional_headers", "extra_headers"):
             try:
-                ws_connect = websockets.connect(
-                    uri,
-                    **{header_kwarg: {"X-Hume-Api-Key": HUME_API_KEY}},
-                )
-                # Test that the keyword is accepted by peeking at the coroutine
-                # (actual TypeError surfaces on __aenter__, but a dry-run avoids
-                #  sending twice – so we just pick the first that doesn't raise
-                #  a TypeError at construction time).
+                ws_connect = websockets.connect(uri, **{header_kwarg: headers})
                 break
             except TypeError:
                 ws_connect = None
                 continue
 
         if ws_connect is None:
-            print("[emotion_detector] Could not determine correct websockets header kwarg")
+            print("[emotion_detector] Could not build websockets connection")
             return None
 
+        # ----------------------------------------------------------------
+        # FIX 2: Hume sends ONE response and then immediately closes with
+        # code 1000 (normal close).  Using `await ws.recv()` raises
+        # ConnectionClosedOK because the close frame arrives before (or
+        # together with) our read.  Using `async for` iterates messages
+        # and stops cleanly when the server closes — no exception.
+        # ----------------------------------------------------------------
         async with ws_connect as ws:
             await ws.send(payload)
-            raw = await ws.recv()
-            return _parse_hume_response(raw)
+            async for raw in ws:          # Hume sends exactly 1 message then closes
+                result = _parse_hume_response(raw)
+                if result:
+                    return result
+                # Hume replied but found no face / below threshold
+                print("[emotion_detector] Hume connected but returned no usable emotion")
+                return None
+
+        # Server closed without sending any message
+        print("[emotion_detector] Hume closed connection without sending data")
+        return None
 
     except Exception as exc:
         print(f"[emotion_detector] Async Hume error: {exc}")
