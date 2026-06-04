@@ -1,11 +1,11 @@
 """
 Emotion detection module using Hume AI Streaming API.
 
-FIXES applied (v2):
-  1. websockets extra_headers → additional_headers  (websockets >= v10 compatibility)
-  2. Removed the guard in _opencv_detector() that was blocking OpenCV even when
-     Hume failed at runtime.  Previously, HUME_SDK_AVAILABLE=True (import succeeds)
-     was enough to disable OpenCV — so both paths returned None.
+FIXES applied:
+  1. websockets extra_headers → additional_headers (websockets >= v10 compatibility)
+  2. Removed the guard in _opencv_detector() that was blocking OpenCV even when Hume failed.
+  3. Switched to URL-based API key authentication for Hume WebSockets.
+  4. Added proper handling for ConnectionClosedOK to prevent results from being dropped.
 """
 
 import os
@@ -119,58 +119,45 @@ def _run_async_in_thread(frame_b64: str) -> Optional[str]:
 
 async def _async_analyze(frame_b64: str) -> Optional[str]:
     """Connect to Hume WebSocket, send one frame, return mapped emotion."""
+    import websockets
+
+    # Pass the API key securely as a query parameter (Hume standard for WebSockets)
+    uri = f"wss://api.hume.ai/v0/stream/models?apikey={HUME_API_KEY}"
+    payload = json.dumps({
+        "data": frame_b64,
+        "models": {"face": {}},
+        "raw_text": False,
+    })
+
+    final_result = None
+
     try:
-        import websockets
-
-        uri     = "wss://api.hume.ai/v0/stream/models"
-        payload = json.dumps({
-            "data": frame_b64,
-            "models": {"face": {}},
-            "raw_text": False,
-        })
-
-        # ----------------------------------------------------------------
-        # FIX 1: websockets >= 10 renamed extra_headers → additional_headers.
-        # Try the new name first, fall back to the old name.
-        # ----------------------------------------------------------------
-        headers = {"X-Hume-Api-Key": HUME_API_KEY}
-        ws_connect = None
-        for header_kwarg in ("additional_headers", "extra_headers"):
-            try:
-                ws_connect = websockets.connect(uri, **{header_kwarg: headers})
-                break
-            except TypeError:
-                ws_connect = None
-                continue
-
-        if ws_connect is None:
-            print("[emotion_detector] Could not build websockets connection")
-            return None
-
-        # ----------------------------------------------------------------
-        # FIX 2: Hume sends ONE response and then immediately closes with
-        # code 1000 (normal close).  Using `await ws.recv()` raises
-        # ConnectionClosedOK because the close frame arrives before (or
-        # together with) our read.  Using `async for` iterates messages
-        # and stops cleanly when the server closes — no exception.
-        # ----------------------------------------------------------------
-        async with ws_connect as ws:
+        # Standard connection, no need for the extra_headers workaround
+        async with websockets.connect(uri) as ws:
             await ws.send(payload)
-            async for raw in ws:          # Hume sends exactly 1 message then closes
+            async for raw in ws:
                 result = _parse_hume_response(raw)
                 if result:
-                    return result
-                # Hume replied but found no face / below threshold
-                print("[emotion_detector] Hume connected but returned no usable emotion")
-                return None
+                    final_result = result
+                    # BREAK instead of RETURN to safely exit the context manager
+                    break
 
-        # Server closed without sending any message
-        print("[emotion_detector] Hume closed connection without sending data")
-        return None
-
+    # Explicitly catch the clean close exceptions raised during cleanup
+    except websockets.exceptions.ConnectionClosedOK:
+        pass
+    except websockets.exceptions.ConnectionClosedError:
+        pass
     except Exception as exc:
-        print(f"[emotion_detector] Async Hume error: {exc}")
-        return None
+        # Fallback catch for varying websockets library versions
+        if "1000 (OK)" not in str(exc):
+            print(f"[emotion_detector] Async Hume error: {exc}")
+
+    # Return the result safely outside the async with block
+    if final_result:
+        return final_result
+
+    print("[emotion_detector] Hume connected but returned no usable emotion")
+    return None
 
 
 def _parse_hume_response(raw: str) -> Optional[str]:
@@ -232,11 +219,6 @@ def _parse_hume_response(raw: str) -> Optional[str]:
 def _opencv_detector(frame_data: np.ndarray) -> Optional[str]:
     """
     Haar-cascade fallback detector.
-
-    FIX 2: The old code had:
-        if USE_HUME and HUME_SDK_AVAILABLE: return None
-    which silently disabled OpenCV even when Hume failed at *runtime*.
-    That guard is now removed — OpenCV runs whenever Hume didn't return a result.
     """
     try:
         gray = cv2.cvtColor(frame_data, cv2.COLOR_BGR2GRAY)
@@ -310,15 +292,15 @@ def _map_hume_emotion_to_mood(hume_emotion: str) -> str:
 
     extended = {
         "Amusement": "happy",    "Satisfaction": "happy",   "Triumph": "happy",
-        "Pride":     "happy",    "Relief":        "happy",   "Gratitude": "happy",
+        "Pride":     "happy",    "Relief":        "happy",  "Gratitude": "happy",
         "Admiration": "happy",   "Adoration":     "happy",
         "Love":      "loving",   "Romance":       "loving",
-        "Disappointment": "sad", "Empathic Pain": "sad",     "Sympathy": "sad",
-        "Tiredness":      "sad", "Boredom":       "sad",     "Guilt":    "sad",
-        "Shame":          "sad", "Embarrassment": "sad",     "Pain":     "sad",
-        "Contempt":  "angry",    "Annoyance":  "angry",      "Envy":     "angry",
-        "Anxiety":   "anxious",  "Horror":     "fearful",    "Doubt":    "fearful",
-        "Confusion": "fearful",  "Awkwardness":"fearful",    "Distress": "fearful",
+        "Disappointment": "sad", "Empathic Pain": "sad",    "Sympathy": "sad",
+        "Tiredness":      "sad", "Boredom":       "sad",    "Guilt":    "sad",
+        "Shame":          "sad", "Embarrassment": "sad",    "Pain":     "sad",
+        "Contempt":  "angry",    "Annoyance":  "angry",     "Envy":     "angry",
+        "Anxiety":   "anxious",  "Horror":     "fearful",   "Doubt":    "fearful",
+        "Confusion": "fearful",  "Awkwardness":"fearful",   "Distress": "fearful",
         "Concentration": "focused", "Contemplation": "focused",
         "Determination": "focused", "Interest":      "focused",
         "Enthusiasm":    "energized", "Craving":    "energized",
