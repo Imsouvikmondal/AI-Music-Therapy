@@ -61,35 +61,49 @@ except (ImportError, OSError) as exc:
 
 try:
     import importlib
-    # Prefer Hume first, then Face++ (if API keys present), then local DeepFace/local model
+    import os as _os
+
+    # Prefer Face++ when API keys are set (explicit config), then Hume (if USE_HUME=1),
+    # finally fall back to the local `emotion_detector` module.
     emotion_detector = None
-    try:
-        import emotion_detector_fixed as ed_fixed
-        emotion_detector = ed_fixed
-    except Exception:
-        pass
 
-    # Face++ adapter (lightweight API) if configured
-    try:
-        import emotion_detector_facepp as ed_facepp
-        # prefer if credentials present (module handles missing creds)
-        emotion_detector = ed_facepp if emotion_detector is None else emotion_detector
-    except Exception:
-        pass
+    _facepp_key = _os.getenv("FACEPP_API_KEY")
+    _facepp_secret = _os.getenv("FACEPP_API_SECRET")
+    if _facepp_key and _facepp_secret:
+        try:
+            import emotion_detector_facepp as ed_facepp
 
+            emotion_detector = ed_facepp
+        except Exception:
+            # keep trying other detectors
+            emotion_detector = None
+
+    # If Face++ not configured, try Hume (if enabled)
+    if emotion_detector is None:
+        try:
+            _use_hume = _os.getenv("USE_HUME", "0") == "1"
+            if _use_hume:
+                import emotion_detector_fixed as ed_fixed
+
+                emotion_detector = ed_fixed
+        except Exception:
+            emotion_detector = None
+
+    # Final fallback: local DeepFace-based detector (may be heavy)
     if emotion_detector is None:
         import emotion_detector as ed_default
+
         emotion_detector = ed_default
 
     emotion_detector = importlib.reload(emotion_detector)
-    analyze_frame = emotion_detector.analyze_frame
-    get_last_detection_error = emotion_detector.get_last_detection_error
+    analyze_frame = getattr(emotion_detector, "analyze_frame", None)
+    get_last_detection_error = getattr(emotion_detector, "get_last_detection_error", lambda: None)
 except (ImportError, OSError, AttributeError) as exc:
     # OSError catches libGL.so.1 and other system library errors
     # This is common on Streamlit Cloud where system libraries are limited
     _dependency_errors.append(("emotion_detector", str(exc)))
     analyze_frame = None
-    get_last_detection_error = None
+    get_last_detection_error = lambda: None
 
 try:
     from emotion_behavior.core import detect_behavior_from_source
