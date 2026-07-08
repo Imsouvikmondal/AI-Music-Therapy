@@ -61,7 +61,11 @@ except (ImportError, OSError) as exc:
 
 try:
     import importlib
-    import emotion_detector
+    # Prefer the Hume-backed detector if available (lighter than TF on cloud)
+    try:
+        import emotion_detector_fixed as emotion_detector
+    except Exception:
+        import emotion_detector
 
     emotion_detector = importlib.reload(emotion_detector)
     analyze_frame = emotion_detector.analyze_frame
