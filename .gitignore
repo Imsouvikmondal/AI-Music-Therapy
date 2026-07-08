@@ -35,3 +35,5 @@ snapshot_test.py
 
 # Unused landing page images
 pexels-*.jpg
+
+.github/workflows/static.yml
