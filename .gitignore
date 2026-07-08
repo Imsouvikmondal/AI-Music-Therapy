@@ -1,72 +1,37 @@
+# Secrets
+.streamlit/secrets.toml
+.env
+*.env
+
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual Environment
-venv/
-env/
-ENV/
 .venv/
-env.bak/
-venv.bak/
+venv/
 
-# IDE
+# IDE / OS
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
 .DS_Store
-.history/
+
+# Logs and temporary files
+*.log
+*.tmp
 
 # Streamlit
 .streamlit/secrets.toml
-.streamlit/credentials.toml
-# Keep config.toml - it should be committed
 
-# Database files (SQLite)
-*.db
-*.sqlite
-*.sqlite3
+
+# Local database
 therapy.db
+*.db
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Development backups
+app_before_efficientface_integration.py
+emotion_detector_before_efficientface.py
 
-# Environment variables
-.env
-.env.local
+# Local test scripts
+snapshot_test.py
 
-# Logs
-*.log
-
-# OS
-Thumbs.db
-.DS_Store
-
-# Model files (if any large files)
-*.h5
-*.pkl
-*.model
-
-# Temporary files
-*.tmp
-*.temp
+# Unused landing page images
+pexels-*.jpg

@@ -13,36 +13,43 @@ import streamlit as st
 
 def get_email_config() -> dict:
     """
-    Get email configuration from environment variables or Streamlit secrets.
-    
-    Required configuration:
-    - SMTP_HOST: SMTP server host (e.g., smtp.gmail.com)
-    - SMTP_PORT: SMTP server port (e.g., 587 for TLS)
-    - SMTP_USER: Email address to send from
-    - SMTP_PASSWORD: Email password or app-specific password
-    - SENDER_NAME: Display name for sender (optional)
+    Get email configuration from Streamlit secrets or environment variables.
+
+    Streamlit secrets are optional. If no secrets.toml exists,
+    fall back safely to environment variables.
     """
-    # Try Streamlit secrets first (for deployment), then environment variables
-    config = {}
-    
-    if hasattr(st, 'secrets') and 'email' in st.secrets:
-        secrets = st.secrets['email']
-        config = {
-            'host': secrets.get('SMTP_HOST', 'smtp.gmail.com'),
-            'port': int(secrets.get('SMTP_PORT', 587)),
-            'user': secrets.get('SMTP_USER', ''),
-            'password': secrets.get('SMTP_PASSWORD', ''),
-            'sender_name': secrets.get('SENDER_NAME', 'Music Therapy Team')
-        }
-    else:
-        config = {
-            'host': os.getenv('SMTP_HOST', 'smtp.gmail.com'),
-            'port': int(os.getenv('SMTP_PORT', 587)),
-            'user': os.getenv('SMTP_USER', ''),
-            'password': os.getenv('SMTP_PASSWORD', ''),
-            'sender_name': os.getenv('SENDER_NAME', 'Music Therapy Team')
-        }
-    
+
+    config = {
+        'host': os.getenv('SMTP_HOST', 'smtp.gmail.com'),
+        'port': int(os.getenv('SMTP_PORT', 587)),
+        'user': os.getenv('SMTP_USER', ''),
+        'password': os.getenv('SMTP_PASSWORD', ''),
+        'sender_name': os.getenv(
+            'SENDER_NAME',
+            'Music Therapy Team'
+        )
+    }
+
+    try:
+        if 'email' in st.secrets:
+            secrets = st.secrets['email']
+
+            config = {
+                'host': secrets.get('SMTP_HOST', 'smtp.gmail.com'),
+                'port': int(secrets.get('SMTP_PORT', 587)),
+                'user': secrets.get('SMTP_USER', ''),
+                'password': secrets.get('SMTP_PASSWORD', ''),
+                'sender_name': secrets.get(
+                    'SENDER_NAME',
+                    'Music Therapy Team'
+                )
+            }
+
+    except Exception:
+        # Email configuration is optional.
+        # Continue using environment variables.
+        pass
+
     return config
 
 

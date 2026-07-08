@@ -95,7 +95,7 @@ try:
 
         emotion_detector = ed_default
 
-    emotion_detector = importlib.reload(emotion_detector)
+    # Do not reload EfficientFace on every Streamlit rerun.
     analyze_frame = getattr(emotion_detector, "analyze_frame", None)
     get_last_detection_error = getattr(emotion_detector, "get_last_detection_error", lambda: None)
 except (ImportError, OSError, AttributeError) as exc:
@@ -130,7 +130,7 @@ TARGET_MOODS: List[str] = getattr(
     ["calm", "happy", "focused", "energized", "relaxed"],
 )
 
-MOOD_OPTIONS = ["happy", "sad", "angry", "fearful", "surprised", "loving", "energized", "anxious", "calm", "focused"]
+MOOD_OPTIONS = ["happy", "sad", "angry", "fearful", "surprised", "disgust", "loving", "energized", "anxious", "calm", "focused"]
 
 
 def normalize_emotion(value: Optional[str]) -> Optional[str]:
@@ -141,6 +141,7 @@ def normalize_emotion(value: Optional[str]) -> Optional[str]:
         "neutral": "calm",
         "relaxed": "calm",
         "surprise": "surprised",
+        "fear": "fearful",
     }
     normalized = aliases.get(normalized, normalized)
     if normalized not in MOOD_OPTIONS:
@@ -1053,9 +1054,58 @@ def render_child_selection() -> None:
                                 if not email:
                                     st.error("Parent email is required to generate an invite.")
                                 else:
-                                    token = database.create_parent_invite(profile["id"], email)
-                                    st.success("Invitation code created. Share it securely with the parent/guardian.")
-                                    st.code(token, language=None)
+                                    try:
+                                        token = database.create_parent_invite(
+                                            profile["id"],
+                                            email
+                                        )
+
+                                        import email_service
+
+                                        therapist_name = st.session_state.get(
+                                            "user_display_name",
+                                            "Your Therapist"
+                                        )
+
+                                        if email_service.is_email_configured():
+                                            email_success, email_msg = (
+                                                email_service.send_invitation_email(
+                                                    parent_email=email,
+                                                    child_name=profile["child_name"],
+                                                    invitation_code=token,
+                                                    therapist_name=therapist_name
+                                                )
+                                            )
+
+                                            if email_success:
+                                                st.success(
+                                                    f"Invitation email sent successfully to {email}."
+                                                )
+                                                st.info(
+                                                    "The parent can use the invitation code "
+                                                    "from the email to create their account."
+                                                )
+                                            else:
+                                                st.warning(
+                                                    f"Invitation code was created, but the "
+                                                    f"email could not be sent: {email_msg}"
+                                                )
+                                                st.code(token, language=None)
+
+                                        else:
+                                            st.success("Invitation code created.")
+                                            st.warning(
+                                                "Email service is not configured. "
+                                                "Share this code manually."
+                                            )
+                                            st.code(token, language=None)
+
+                                    except ValueError as exc:
+                                        st.error(str(exc))
+                                    except Exception as exc:
+                                        st.error(
+                                            f"Failed to create invitation: {exc}"
+                                        )
 
 
 def render_new_session(profile: Dict[str, Any]) -> None:
@@ -1156,47 +1206,89 @@ def render_new_session(profile: Dict[str, Any]) -> None:
             import time
             from collections import Counter
             _last_analysis = {"time": 0}
+
+            # Keep recent predictions for temporal smoothing.
+            # This object is shared by calls to the WebRTC callback.
+            _live_prediction_history = []
+            _displayed_emotion = {"emotion": None}
             
             def video_frame_callback(frame: "av.VideoFrame") -> "av.VideoFrame":  # type: ignore[name-defined]
                 av_frame = frame.to_ndarray(format="bgr24")
                 
-                # Throttle emotion detection: analyze every 1 second for more responsive detection
+                # Analyze one frame per second.
                 current_time = time.time()
-                if current_time - _last_analysis["time"] >= 1.0:  # Analyze once per second
+
+                if current_time - _last_analysis["time"] >= 1.0:
                     _last_analysis["time"] = current_time
-                    emotion = analyze_frame(av_frame)
-                    if emotion:
-                        emotion = normalize_emotion(emotion)
+
+                    raw_emotion = analyze_frame(av_frame)
+
+                    if raw_emotion:
+                        emotion = normalize_emotion(raw_emotion)
+
                         if emotion:
-                            print(f"[app.py] Adding to queue: {emotion}")
+                            # Add newest prediction.
+                            _live_prediction_history.append(emotion)
+
+                            # Keep only the latest 5 predictions.
+                            if len(_live_prediction_history) > 3:
+                                _live_prediction_history.pop(0)
+
+                            # Majority vote over recent predictions.
+                            emotion_counts = Counter(
+                                _live_prediction_history
+                            )
+
+                            smoothed_emotion = emotion_counts.most_common(1)[0][0]
+
+                            _displayed_emotion["emotion"] = smoothed_emotion
+
+                            print(
+                                f"[app.py] Raw: {emotion} | "
+                                f"History: {_live_prediction_history} | "
+                                f"Smoothed: {smoothed_emotion}"
+                            )
+
+                            # Add only the smoothed emotion to the queue.
                             try:
-                                emotion_queue.put_nowait(emotion)
-                                print(f"[app.py] Queue size: {emotion_queue.qsize()}")
+                                emotion_queue.put_nowait(smoothed_emotion)
+
                             except Full:
-                                # Remove oldest and add new
                                 try:
                                     emotion_queue.get_nowait()
-                                    emotion_queue.put_nowait(emotion)
-                                    print(f"[app.py] Queue was full, replaced oldest")
-                                except:
+                                    emotion_queue.put_nowait(smoothed_emotion)
+                                except Exception:
                                     pass
-                            if cv2 is not None:
-                                cv2.putText(
-                                    av_frame,
-                                    emotion.title(),
-                                    (10, 30),
-                                    cv2.FONT_HERSHEY_SIMPLEX,
-                                    1.0,
-                                    (0, 255, 0),
-                                    2,
-                                    cv2.LINE_AA,
-                                )
+
                         else:
-                            print(f"[app.py] normalize_emotion returned None for: {emotion}")
+                            print(
+                                f"[app.py] normalize_emotion returned None "
+                                f"for: {raw_emotion}"
+                            )
+
                     else:
-                        print(f"[app.py] analyze_frame returned None")
+                        print("[app.py] analyze_frame returned None")
+
+                # Keep displaying the latest smoothed emotion
+                # between inference intervals.
+                display_emotion = _displayed_emotion["emotion"]
+
+                if display_emotion and cv2 is not None:
+                    cv2.putText(
+                        av_frame,
+                        display_emotion.title(),
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.0,
+                        (0, 255, 0),
+                        2,
+                        cv2.LINE_AA,
+                    )
                 
-                return av.VideoFrame.from_ndarray(av_frame, format="bgr24")
+                return av.VideoFrame.from_ndarray(
+                    av_frame,
+                    format="bgr24"
+                )
 
             st.warning(
                 "⚠️ **Real-time video may have connection issues.** "
@@ -1325,9 +1417,20 @@ def render_new_session(profile: Dict[str, Any]) -> None:
             # Process snapshot if available and not already processed
             if snapshot is not None and detector_available:
                 # Create a unique key for this snapshot to detect new captures
-                snapshot_id = st.session_state.get("_snapshot_id", 0)
-                current_snapshot_key = f"snapshot_{id(snapshot)}"
-                last_processed_key = st.session_state.get("_last_snapshot_key", None)
+                # Use image-content hash instead of Python object id.
+                # Streamlit reruns can recreate the UploadedFile object,
+                # making id(snapshot) unreliable.
+                import hashlib
+
+                snapshot_bytes = snapshot.getvalue()
+                current_snapshot_key = hashlib.sha256(
+                    snapshot_bytes
+                ).hexdigest()
+
+                last_processed_key = st.session_state.get(
+                    "_last_snapshot_key",
+                    None
+                )
                 
                 # Only process if this is a new snapshot
                 if current_snapshot_key != last_processed_key:
@@ -1342,6 +1445,7 @@ def render_new_session(profile: Dict[str, Any]) -> None:
                         with st.spinner("🔍 Analyzing emotion... (this may take a few seconds)"):
                             raw_emotion = analyze_frame(frame_bgr)
                             emotion = normalize_emotion(raw_emotion)
+
                         
                         # Mark this snapshot as processed
                         st.session_state["_last_snapshot_key"] = current_snapshot_key
