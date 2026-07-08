@@ -35,9 +35,17 @@
    - Benefits and trade-offs
    - **Time to read**: 15 minutes
 
+5. **[BEHAVIOR_DETECTION.md](BEHAVIOR_DETECTION.md)** 🎬 Video behavior analysis
+   - Behavior detection implementation
+   - Stimming behavior recognition (autistic children)
+   - Motion analysis with MediaPipe + OpenCV fallback
+   - Integration with music recommendation engine
+   - Troubleshooting and testing
+   - **Time to read**: 10 minutes
+
 ### Reference Materials
 
-5. **[IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)** 📝 Implementation details
+6. **[IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)** 📝 Implementation details
    - Code architecture
    - Performance characteristics
    - Security considerations

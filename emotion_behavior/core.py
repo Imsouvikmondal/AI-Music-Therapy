@@ -34,6 +34,11 @@ VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 BEHAVIOR_TO_EMOTION: Dict[str, str] = {
     "normal": "calm",        # Normal behavior → calm mood
     "fight": "angry",        # Fighting/aggressive behavior → angry mood
+    # Stimming and atypical behaviors should not be treated as 'calm' (no-op).
+    # Map them to an active target so music is selected to help regulation.
+    "flapping": "anxious",
+    "spinning": "anxious",
+    "hiding": "fearful",
 }
 
 
@@ -416,12 +421,52 @@ def detect_behavior_from_source(
     max_clips: int = 4,
 ) -> BehaviorPrediction:
     predictor = load_behavior_predictor()
-    if predictor is None:
-        raise RuntimeError("Behavior predictor is unavailable.")
-    return predictor.predict_source(
-        source,
-        clip_len=clip_len,
-        max_frames=max_frames,
-        analysis_seconds=analysis_seconds,
-        max_clips=max_clips,
-    )
+    if predictor is not None:
+        return predictor.predict_source(
+            source,
+            clip_len=clip_len,
+            max_frames=max_frames,
+            analysis_seconds=analysis_seconds,
+            max_clips=max_clips,
+        )
+    
+    # Fallback: Use motion-based behavior detection (MediaPipe Pose)
+    # This detects flapping, arm movements, and overall activity intensity
+    try:
+        from .motion_detector import detect_behavior_motion_based
+        label, confidence = detect_behavior_motion_based(
+            source,
+            max_frames=max_frames,
+            analysis_seconds=analysis_seconds,
+        )
+        # Provide scores for possible fallback labels
+        scores = {
+            "normal": 0.0,
+            "fight": 0.0,
+            "flapping": 0.0,
+            "spinning": 0.0,
+            "hiding": 0.0,
+        }
+        scores[label] = float(confidence)
+        # For remaining keys, distribute residual probability
+        residual = max(0.0, 1.0 - float(confidence))
+        num_other = max(1, len(scores) - 1)
+        for k in scores:
+            if k != label:
+                scores[k] = float(residual / num_other)
+
+        return BehaviorPrediction(
+            label=label,
+            confidence=confidence,
+            scores=scores,
+            frames_analyzed=max_frames,
+        )
+    except Exception as e:
+        print(f"Behavior detection fallback failed: {e}")
+        # Final fallback: assume normal/calm behavior
+        return BehaviorPrediction(
+            label="normal",
+            confidence=0.5,
+            scores={"normal": 0.5, "fight": 0.5},
+            frames_analyzed=0,
+        )

@@ -74,11 +74,10 @@ except (ImportError, OSError, AttributeError) as exc:
     get_last_detection_error = None
 
 try:
-    from emotion_behavior.core import detect_behavior_from_source, BEHAVIOR_TO_EMOTION
+    from emotion_behavior.core import detect_behavior_from_source
 except Exception as exc:
     _dependency_errors.append(("emotion_behavior", str(exc)))
     detect_behavior_from_source = None
-    BEHAVIOR_TO_EMOTION = {}
 
 
 st.set_page_config(page_title="Music Therapy Recommender", layout="wide")
@@ -1438,14 +1437,22 @@ def render_new_session(profile: Dict[str, Any]) -> None:
                                 "Place a pretrained behavior model checkpoint at artifacts/behavior_model.pt "
                                 "or set BEHAVIOR_MODEL_PATH in .env to your checkpoint file."
                             )
+                        # Increase analysis window to better detect repetitive stimming
                         behavior_result = detect_behavior_from_source(
                             temp_path,
-                            analysis_seconds=10,
-                            max_frames=64,
-                            max_clips=4,
+                            analysis_seconds=12,
+                            max_frames=200,
+                            max_clips=6,
                         )
-                    # Map behavior to emotion for recommendations
-                    detected_emotion = BEHAVIOR_TO_EMOTION.get(behavior_result.label, "calm")
+                    # Map behavior to emotion for recommendations — reload mapping at runtime
+                    try:
+                        import importlib
+                        import emotion_behavior.core as _eb_core
+                        importlib.reload(_eb_core)
+                        mapping = getattr(_eb_core, "BEHAVIOR_TO_EMOTION", {}) or {}
+                    except Exception:
+                        mapping = {}
+                    detected_emotion = mapping.get(behavior_result.label, "calm")
                     st.success(
                         f"Behavior: {behavior_result.label.title()} ({behavior_result.confidence:.2%}) → Mood: {detected_emotion.title()}"
                     )
@@ -1485,14 +1492,22 @@ def render_new_session(profile: Dict[str, Any]) -> None:
                                 "Place a pretrained behavior model checkpoint at artifacts/behavior_model.pt "
                                 "or set BEHAVIOR_MODEL_PATH in .env to your checkpoint file."
                             )
+                        # For streams use a longer window to improve detection robustness
                         behavior_result = detect_behavior_from_source(
                             stream_url,
-                            analysis_seconds=10,
-                            max_frames=64,
-                            max_clips=4,
+                            analysis_seconds=12,
+                            max_frames=200,
+                            max_clips=6,
                         )
-                    # Map behavior to emotion for recommendations
-                    detected_emotion = BEHAVIOR_TO_EMOTION.get(behavior_result.label, "calm")
+                    # Map behavior to emotion for recommendations — reload mapping at runtime
+                    try:
+                        import importlib
+                        import emotion_behavior.core as _eb_core
+                        importlib.reload(_eb_core)
+                        mapping = getattr(_eb_core, "BEHAVIOR_TO_EMOTION", {}) or {}
+                    except Exception:
+                        mapping = {}
+                    detected_emotion = mapping.get(behavior_result.label, "calm")
                     st.success(
                         f"Behavior: {behavior_result.label.title()} ({behavior_result.confidence:.2%}) → Mood: {detected_emotion.title()}"
                     )
