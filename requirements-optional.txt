@@ -1,0 +1,4 @@
+# Optional heavy dependencies (install locally if you need TF-backed DeepFace)
+tensorflow>=2.12.0,<2.22.0
+tf-keras>=2.12.0
+deepface>=0.0.100
