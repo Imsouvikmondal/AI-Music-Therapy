@@ -61,11 +61,25 @@ except (ImportError, OSError) as exc:
 
 try:
     import importlib
-    # Prefer the Hume-backed detector if available (lighter than TF on cloud)
+    # Prefer Hume first, then Face++ (if API keys present), then local DeepFace/local model
+    emotion_detector = None
     try:
-        import emotion_detector_fixed as emotion_detector
+        import emotion_detector_fixed as ed_fixed
+        emotion_detector = ed_fixed
     except Exception:
-        import emotion_detector
+        pass
+
+    # Face++ adapter (lightweight API) if configured
+    try:
+        import emotion_detector_facepp as ed_facepp
+        # prefer if credentials present (module handles missing creds)
+        emotion_detector = ed_facepp if emotion_detector is None else emotion_detector
+    except Exception:
+        pass
+
+    if emotion_detector is None:
+        import emotion_detector as ed_default
+        emotion_detector = ed_default
 
     emotion_detector = importlib.reload(emotion_detector)
     analyze_frame = emotion_detector.analyze_frame
